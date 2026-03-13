@@ -10,6 +10,11 @@ import MainScreen from './app/index';
 
 export default function App() {
   return (
+
+
+
+
+
     <ThemeProvider value={NAV_THEME.light}>
       <SafeAreaProvider>
         <GestureHandlerRootView style={{ flex: 1 }}>

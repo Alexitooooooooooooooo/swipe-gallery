@@ -1,20 +1,40 @@
 import React, { useState } from "react";
-import { View, Image, Text as RNText } from "react-native";
+import { View, Image, Text as RNText, Alert } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Button } from "@/components/ui/button";
 import { Text } from "@/components/ui/text";
 import { Play, Loader2 } from "lucide-react-native";
+import * as MediaLibrary from 'expo-media-library';
 
 export default function App() {
   const [isLoading, setIsLoading] = useState(false);
+  
+  // Custom Hook request to get strictly photos:
+  const [permissionResponse, requestPermission] = MediaLibrary.usePermissions({
+    granularPermissions: ['photo']
+  });
 
-  const handlePress = () => {
+  const handlePress = async () => {
     setIsLoading(true);
-    // Simulate loading for 2 seconds
-    setTimeout(() => {
+    
+    try {
+      if (!permissionResponse || permissionResponse.status !== 'granted') {
+        const response = await requestPermission();
+        if (response.granted) {
+          Alert.alert("¡Éxito!", "Resolvimos los permisos, ya puedes organizar tus fotos.");
+        } else {
+          Alert.alert("Permiso Denegado", "Lo siento, necesitamos tu galería para seguir.");
+        }
+      } else {
+        Alert.alert("Permiso Listo", "¡Ya tienes acceso total a tus fotos!");
+      }
+    } catch (error) {
+      console.error(error);
+      Alert.alert("Error", "Problema solicitando permisos.");
+    } finally {
       setIsLoading(false);
-    }, 2000);
+    }
   };
 
   return (
