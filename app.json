@@ -12,7 +12,16 @@
       "tsconfigPaths": true
     },
 
-    "plugins": [],
+    "plugins": [
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Permite a la app acceder a tus fotos para que puedas deslizar y limpiar tu galería.",
+          "savePhotosPermission": "Permite a la app guardar o modificar las fotos de tu galería.",
+          "isAccessMediaLocationEnabled": true
+        }
+      ]
+    ],
 
     "orientation": "portrait",
     "icon": "./assets/icon.png",
