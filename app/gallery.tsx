@@ -24,6 +24,8 @@ type GalleryAsset = {
 
 export default function GalleryScreen() {
   const [photoStack, setPhotoStack] = useState<GalleryAsset[]>([]);
+  const [showSimulated, setShowSimulated] = useState(false);
+  const [disableActions, setDisableActions] = useState(false);
   const [loading, setLoading] = useState(true);
   const [deletephotos, setDeletePhotos] = useState<GalleryAsset[]>([]);
   const [keepphotos, setKeepPhotos] = useState<GalleryAsset[]>([]);
@@ -37,6 +39,8 @@ export default function GalleryScreen() {
   const limitModalShownRef = React.useRef(false);
   const [nextCursor, setNextCursor] = useState<string | undefined>(undefined);
   const [hasNextPage, setHasNextPage] = useState(true);
+  const [totalImages, setTotalImages] = useState<number | null>(null);
+  const [loadedImages, setLoadedImages] = useState<number>(0);
 
   const preloadUris = async (uris: string[]) => {
     await Promise.all(
@@ -60,11 +64,15 @@ export default function GalleryScreen() {
       void ExpoImage.prefetch(lastDeleted.uri);
       setDeletePhotos(prev => prev.slice(0, -1));
       setPhotoStack(prev => [lastDeleted, ...prev]);
+      setShowSimulated(false);
+      setDisableActions(false);
       console.log("Foto restaurada (eliminada):", lastDeleted.uri);
     } else if (lastKept) {
       void ExpoImage.prefetch(lastKept.uri);
       setKeepPhotos(prev => prev.slice(0, -1));
       setPhotoStack(prev => [lastKept, ...prev]);
+      setShowSimulated(false);
+      setDisableActions(false);
       console.log("Foto restaurada (conservada):", lastKept.uri);
     }
   };
@@ -73,17 +81,53 @@ export default function GalleryScreen() {
     if (isLoadingMoreRef.current) return;
     if (!isInitial && !hasNextPage) return;
 
+    // Verifica si ya cargamos todas las imágenes
+    if (totalImages !== null && loadedImages >= totalImages) {
+      setHasNextPage(false);
+      setNextCursor(undefined);
+      isLoadingMoreRef.current = false;
+      if (isInitial) setLoading(false);
+      return;
+    }
+
     isLoadingMoreRef.current = true;
 
     try {
       const { status } = await MediaLibrary.requestPermissionsAsync();
       if (status !== 'granted') {
         console.log("Permiso denegado");
+        isLoadingMoreRef.current = false;
+        return;
+      }
+
+      let batchSize = BATCH_SIZE;
+      // Si no tenemos el total, lo pedimos
+      if (totalImages === null) {
+        const totalInfo = await MediaLibrary.getAssetsAsync({ first: 1, mediaType: 'photo' });
+        setTotalImages(totalInfo.totalCount ?? 0);
+        console.log('Total de imágenes en el dispositivo:', totalInfo.totalCount ?? 0);
+        if ((totalInfo.totalCount ?? 0) < BATCH_SIZE) {
+          batchSize = totalInfo.totalCount ?? 0;
+        }
+      } else if (isInitial && totalImages < BATCH_SIZE) {
+        batchSize = totalImages;
+      }
+
+      // Si ya tenemos el total y quedan menos de un batch, ajusta el batch
+      if (totalImages !== null && loadedImages + batchSize > totalImages) {
+        batchSize = totalImages - loadedImages;
+      }
+
+      if (batchSize <= 0) {
+        setHasNextPage(false);
+        setNextCursor(undefined);
+        isLoadingMoreRef.current = false;
+        if (isInitial) setLoading(false);
         return;
       }
 
       const { assets, endCursor, hasNextPage: morePages } = await MediaLibrary.getAssetsAsync({
-        first: BATCH_SIZE,
+        first: batchSize,
         mediaType: 'photo',
         after: isInitial ? undefined : nextCursor,
       });
@@ -93,13 +137,29 @@ export default function GalleryScreen() {
         uri: asset.uri,
       }));
 
-      if (mappedAssets.length > 0) {
-        await preloadUris(mappedAssets.map((asset) => asset.uri));
+      // Si no hay assets y no hay más páginas, no cargar más
+      if (mappedAssets.length === 0 && !morePages) {
+        setHasNextPage(false);
+        setNextCursor(undefined);
+        isLoadingMoreRef.current = false;
+        if (isInitial) setLoading(false);
+        return;
       }
 
-      setPhotoStack((prev) => (isInitial ? mappedAssets : [...prev, ...mappedAssets]));
+      if (mappedAssets.length > 0) {
+        await preloadUris(mappedAssets.map((asset) => asset.uri));
+        let newStack = isInitial ? mappedAssets : [...photoStack, ...mappedAssets];
+        // Si ya llegamos al total, agregamos la simulada
+        if (loadedImages + mappedAssets.length >= (totalImages ?? 0)) {
+          newStack = [...newStack, { id: 'simulated', uri: 'simulated' }];
+        }
+        setPhotoStack(newStack);
+        setLoadedImages((prev) => prev + mappedAssets.length);
+      } else if (isInitial) {
+        setPhotoStack([]);
+      }
       setNextCursor(endCursor ?? undefined);
-      setHasNextPage(morePages);
+      setHasNextPage(morePages && (totalImages === null || loadedImages + mappedAssets.length < totalImages));
     } catch (error) {
       console.warn('Error cargando fotos:', error);
     } finally {
@@ -110,7 +170,7 @@ export default function GalleryScreen() {
 
   const maybeLoadMorePhotos = (nextCardIndex: number) => {
     const remainingCards = photoStack.length - nextCardIndex;
-    if (remainingCards <= LOAD_MORE_THRESHOLD) {
+    if (remainingCards <= LOAD_MORE_THRESHOLD && hasNextPage) {
       void loadMorePhotos(false);
     }
   };
@@ -253,7 +313,7 @@ export default function GalleryScreen() {
                 </TouchableOpacity>
               </View>
 
-              {/* Swiper siempre montado para evitar reseteos/parpadeos */}
+              {/* Swiper y mensaje de no hay más fotos */}
               <View
                 style={{
                   flex: 1,
@@ -262,42 +322,84 @@ export default function GalleryScreen() {
                 pointerEvents={viewMode === 'gallery' ? 'auto' : 'none'}
               >
                 <View style={{ flex: 1 }}>
-                  <Swiper
-                    ref={swiperRef}
-                    cards={photoStack}
-                    renderCard={(card) =>
-                      card ? (
-                        <ExpoImage
-                          key={card.id}
-                          source={card.uri}
-                          style={{ width: '100%', height: '100%', borderRadius: 24 }}
-                          contentFit="cover"
-                          transition={0}
-                          cachePolicy="memory-disk"
-                          recyclingKey={card.id}
-                        />
-                      ) : (
-                        <View style={{ width: '100%', height: '100%', borderRadius: 24, backgroundColor: '#f3f4f6' }} />
-                      )
-                    }
-                    onSwipedLeft={managephotodelete}
-                    onSwipedRight={managephotokeep}
-                    onSwipedAll={() => {
-                      swipeLockRef.current = false;
-                    }}
-                    stackSize={2}
-                    backgroundColor="transparent"
-                    animateCardOpacity={false}
-                    stackSeparation={15}
-                    showSecondCard={true}
-                    disableTopSwipe={true}
-                    disableBottomSwipe={true}
-                    horizontalThreshold={width * 0.25}
-                    containerStyle={{ flex: 1 }}
-                    cardHorizontalMargin={0}
-                    cardVerticalMargin={0}
-                    cardStyle={{ borderRadius: 24, overflow: 'hidden', flex: 1, width: '100%' }}
-                  />
+                  {photoStack.length === 0 && !hasNextPage ? (
+                    <View style={{ width: '100%', height: '100%', justifyContent: 'center', alignItems: 'center', borderRadius: 24, backgroundColor: '#f3f4f6' }}>
+                      <RNText style={{ fontSize: 18, color: '#7c3aed', fontWeight: 'bold', textAlign: 'center' }}>
+                        No hay más fotos que verificar
+                      </RNText>
+                    </View>
+                  ) : (
+                    <Swiper
+                      ref={swiperRef}
+                      cards={photoStack}
+                      renderCard={(card, index) =>
+                        card && card.id !== 'simulated' ? (
+                          <ExpoImage
+                            key={card.id}
+                            source={card.uri}
+                            style={{ width: '100%', height: '100%', borderRadius: 24 }}
+                            contentFit="cover"
+                            transition={0}
+                            cachePolicy="memory-disk"
+                            recyclingKey={card.id}
+                          />
+                        ) : card && card.id === 'simulated' ? (
+                          <View style={{
+                            width: '100%',
+                            height: '100%',
+                            borderRadius: 24,
+                            backgroundColor: '#f3f4f6',
+                            justifyContent: 'center',
+                            alignItems: 'center',
+                            position: 'absolute',
+                            top: 0,
+                            left: 0,
+                            right: 0,
+                            bottom: 0,
+                            zIndex: 50,
+                          }}>
+                            <RNText style={{ fontSize: 22, color: '#7c3aed', fontWeight: 'bold', textAlign: 'center', marginBottom: 12 }}>
+                              No hay más imágenes que verificar
+                            </RNText>
+                          </View>
+                        ) : (
+                          <View style={{ width: '100%', height: '100%', borderRadius: 24, backgroundColor: '#f3f4f6' }} />
+                        )
+                      }
+                      onSwipedLeft={managephotodelete}
+                      onSwipedRight={managephotokeep}
+                      onSwipedAll={() => {
+                        swipeLockRef.current = false;
+                      }}
+                      stackSize={2}
+                      backgroundColor="transparent"
+                      animateCardOpacity={false}
+                      stackSeparation={15}
+                      showSecondCard={true}
+                      disableTopSwipe={true}
+                      disableBottomSwipe={true}
+                      horizontalThreshold={width * 0.25}
+                      containerStyle={{ flex: 1 }}
+                      cardHorizontalMargin={0}
+                      cardVerticalMargin={0}
+                      cardStyle={{ borderRadius: 24, overflow: 'hidden', flex: 1, width: '100%' }}
+                      swipeBackCard={false}
+                      disableLeftSwipe={showSimulated}
+                      disableRightSwipe={showSimulated}
+                      disableTopSwipe={true}
+                      disableBottomSwipe={true}
+                      onSwiped={(cardIndex) => {
+                        // Si la siguiente es la simulada, deshabilita acciones
+                        if (photoStack[cardIndex + 1] && photoStack[cardIndex + 1].id === 'simulated') {
+                          setShowSimulated(true);
+                          setDisableActions(true);
+                        } else {
+                          setShowSimulated(false);
+                          setDisableActions(false);
+                        }
+                      }}
+                    />
+                  )}
                 </View>
 
                 {/* Contenedor de botones sobrepuesto debajo de la foto */}
@@ -326,37 +428,41 @@ export default function GalleryScreen() {
                   >
                     {/* Botón Deshacer funcional */}
                     <TouchableOpacity
-                      className={`w-16 h-16 rounded-full border-2 border-gray-400 items-center justify-center shadow-lg ${
+                      className={`w-16 h-16 rounded-full border-2 items-center justify-center shadow-lg ${
                         (deletephotos.length === 0 && keepphotos.length === 0) ? 'bg-gray-200 opacity-50' : 'bg-gray-300'
                       }`}
                       onPress={handleUndo}
                       disabled={deletephotos.length === 0 && keepphotos.length === 0}
                     >
-                      <RotateCcw size={24} color="#ffffff" strokeWidth={2.5} />
+                      <RotateCcw size={24} color={showSimulated ? '#a1a1aa' : '#ffffff'} strokeWidth={2.5} />
                     </TouchableOpacity>
 
                     {/* Botón Eliminar funcional */}
                     <TouchableOpacity
-                      className="w-16 h-16 rounded-full border-2 border-[#ef4444] items-center justify-center bg-[#ef4444] shadow-lg"
+                      className="w-16 h-16 rounded-full border-2 items-center justify-center shadow-lg"
                       onPress={() => {
                         if (swipeLockRef.current) return;
-                        swipeLockRef.current = true;
+                        if (disableActions) return;
                         swiperRef.current?.swipeLeft();
                       }}
+                      disabled={disableActions || showSimulated || photoStack.length === 0 && !hasNextPage}
+                      style={disableActions || showSimulated || photoStack.length === 0 && !hasNextPage ? { opacity: 0.25, backgroundColor: '#ef4444', borderColor: '#ef4444' } : { backgroundColor: '#ef4444', borderColor: '#ef4444' }}
                     >
-                      <X size={28} color="#ffffff" strokeWidth={2.5} />
+                      <X size={28} color={disableActions || showSimulated || photoStack.length === 0 && !hasNextPage ? '#ffffff' : '#ffffff'} strokeWidth={2.5} />
                     </TouchableOpacity>
 
                     {/* Botón Conservar funcional */}
                     <TouchableOpacity
-                      className="w-16 h-16 rounded-full border-2 border-[#7c3aed] items-center justify-center bg-[#7c3aed] shadow-lg"
+                      className="w-16 h-16 rounded-full border-2 items-center justify-center shadow-lg"
                       onPress={() => {
                         if (swipeLockRef.current) return;
-                        swipeLockRef.current = true;
+                        if (disableActions) return;
                         swiperRef.current?.swipeRight();
                       }}
+                      disabled={disableActions || showSimulated || photoStack.length === 0 && !hasNextPage}
+                      style={disableActions || showSimulated || photoStack.length === 0 && !hasNextPage ? { opacity: 0.25, backgroundColor: '#7c3aed', borderColor: '#7c3aed' } : { backgroundColor: '#7c3aed', borderColor: '#7c3aed' }}
                     >
-                      <Check size={28} color="#ffffff" strokeWidth={2.5} />
+                      <Check size={28} color={disableActions || showSimulated || photoStack.length === 0 && !hasNextPage ? '#ffffff' : '#ffffff'} strokeWidth={2.5} />
                     </TouchableOpacity>
                   </View>
                 </View>
