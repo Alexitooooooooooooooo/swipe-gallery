@@ -21,6 +21,7 @@ export default function GalleryScreen() {
   const [keepphotos, setKeepPhotos] = useState<string[]>([]);
   const [viewMode, setViewMode] = useState<'gallery' | 'delete'>('gallery');
   const swiperRef = React.useRef<any>(null);
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
   const currentCardIndexRef = React.useRef(0);
   const swipeLockRef = React.useRef(false);
 
@@ -300,7 +301,7 @@ export default function GalleryScreen() {
                             key={uri + index}
                             className="mb-4"
                             style={{
-                              width: (width * 0.92 - 60) / 4, // 4 columnas, más separación
+                              width: (width * 0.92 - 60) / 4,
                               marginRight: (index % 4 !== 3) ? 12 : 0,
                               position: 'relative',
                             }}
@@ -314,6 +315,29 @@ export default function GalleryScreen() {
                               cachePolicy="memory-disk"
                               recyclingKey={uri}
                             />
+                            <TouchableOpacity
+                              style={{
+                                position: 'absolute',
+                                top: 4,
+                                right: 4,
+                                width: 22,
+                                height: 22,
+                                borderRadius: 11,
+                                backgroundColor: '#ef4444',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                zIndex: 10,
+                                shadowColor: '#000',
+                                shadowOffset: { width: 0, height: 1 },
+                                shadowOpacity: 0.12,
+                                shadowRadius: 2,
+                              }}
+                              onPress={() => {
+                                setDeletePhotos(prev => prev.filter((item, i) => i !== index));
+                              }}
+                            >
+                              <X size={14} color="#fff" strokeWidth={2.5} />
+                            </TouchableOpacity>
                           </View>
                         ))}
                       </View>
@@ -321,10 +345,11 @@ export default function GalleryScreen() {
                     {/* Botón principal rojo eliminar como footer fijo */}
                     <View style={{ width: '100%', alignItems: 'center', position: 'absolute', left: 0, right: 0, bottom: 0, paddingBottom: 16, backgroundColor: 'transparent' }}>
                       <TouchableOpacity
-                        className="flex-row items-center justify-center bg-[#ef4444] border-2 border-[#ef4444] rounded-full shadow-lg px-6 py-3"
+                        className={`flex-row items-center justify-center bg-[#ef4444] border-2 border-[#ef4444] rounded-full shadow-lg px-6 py-3 ${deletephotos.length === 0 ? 'opacity-50' : ''}`}
                         style={{ minWidth: 180 }}
                         onPress={() => {
-                          setDeletePhotos([]);
+                          if (deletephotos.length === 0) return;
+                          setShowConfirmModal(true);
                         }}
                         disabled={deletephotos.length === 0}
                       >
@@ -346,6 +371,107 @@ export default function GalleryScreen() {
           </View>
         )}
       </View>
+
+      {/* Modal de confirmación global, por encima de todo */}
+      {showConfirmModal && (
+        <View
+          style={{
+            position: 'absolute',
+            left: 0,
+            right: 0,
+            top: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0,0,0,0.4)',
+            justifyContent: 'center',
+            alignItems: 'center',
+            zIndex: 100,
+          }}
+        >
+          <View
+            style={{
+              backgroundColor: '#fff',
+              borderRadius: 20,
+              paddingHorizontal: 20,
+              paddingTop: 18,
+              paddingBottom: 16,
+              width: 320,
+              maxWidth: '90%',
+              shadowColor: '#000',
+              shadowOpacity: 0.2,
+              shadowRadius: 18,
+              shadowOffset: { width: 0, height: 8 },
+            }}
+          >
+            <RNText
+              style={{
+                fontSize: 18,
+                fontWeight: '600',
+                color: '#111827',
+                textAlign: 'center',
+                marginBottom: 10,
+              }}
+            >
+              Eliminar
+            </RNText>
+            <RNText
+              style={{
+                fontSize: 14,
+                color: '#374151',
+                textAlign: 'center',
+                marginBottom: 18,
+              }}
+            >
+              ¿Eliminar {deletephotos.length} elemento{deletephotos.length !== 1 ? 's' : ''} seleccionado{deletephotos.length !== 1 ? 's' : ''}? Esta acción no se puede deshacer.
+            </RNText>
+            <View
+              style={{
+                flexDirection: 'row',
+                justifyContent: 'space-between',
+                marginTop: 4,
+              }}
+            >
+              <TouchableOpacity
+                style={{
+                  flex: 1,
+                  paddingVertical: 10,
+                  marginRight: 6,
+                  borderRadius: 999,
+                  backgroundColor: '#4b5563',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+                onPress={() => setShowConfirmModal(false)}
+              >
+                <RNText style={{ color: '#fff', fontWeight: '600', fontSize: 14 }}>
+                  Cancelar
+                </RNText>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={{
+                  flex: 1,
+                  paddingVertical: 10,
+                  marginLeft: 6,
+                  borderRadius: 999,
+                  backgroundColor: '#ef4444',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+                onPress={() => {
+                  setDeletePhotos([]);
+                  setShowConfirmModal(false);
+                }}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
+                  <Trash2 size={20} color="#fff" strokeWidth={2.5} />
+                  <RNText style={{ color: '#fff', fontWeight: '600', fontSize: 14, marginLeft: 6 }}>
+                    Eliminar
+                  </RNText>
+                </View>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      )}
     </SafeAreaView>
   );
 }
