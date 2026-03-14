@@ -7,11 +7,57 @@ import { Text } from "@/components/ui/text";
 import { RotateCcw, X, Check } from "lucide-react-native";
 import * as MediaLibrary from 'expo-media-library';
 
+
+
+
+
 const { width, height } = Dimensions.get('window');
 
 export default function GalleryScreen() {
   const [photoStack, setPhotoStack] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
+  const [deletephotos, setDeletePhotos] = useState<string[]>([]);
+  const [keepphotos, setKeepPhotos] = useState<string[]>([]);
+  const [isSwiping, setIsSwiping] = useState(false);
+  const swiperRef = React.useRef<any>(null);
+
+  // Rehacer: elimina la última foto de deletephotos o keepphotos y la pone al frente del stack
+  const handleUndo = () => {
+    if (isSwiping) return;
+    const lastDeleted = deletephotos[deletephotos.length - 1];
+    const lastKept = keepphotos[keepphotos.length - 1];
+
+    if (lastDeleted) {
+      setDeletePhotos(prev => prev.slice(0, -1));
+      setPhotoStack(prev => [lastDeleted, ...prev]);
+      console.log("Foto restaurada (eliminada):", lastDeleted);
+    } else if (lastKept) {
+      setKeepPhotos(prev => prev.slice(0, -1));
+      setPhotoStack(prev => [lastKept, ...prev]);
+      console.log("Foto restaurada (conservada):", lastKept);
+    }
+  };
+
+  const managephotodelete = (cardIndex: number) => {
+    // Se llama solo cuando el swipe ya terminó (onSwipedLeft)
+    setDeletePhotos(prev => {
+      const updated = [...prev, photoStack[cardIndex]];
+      console.log("Fotos a eliminar:", updated);
+      return updated;
+    });
+    setIsSwiping(false);
+  };
+
+  const managephotokeep = (cardIndex: number) => {
+    // Se llama solo cuando el swipe ya terminó (onSwipedRight)
+    setKeepPhotos(prev => {
+      const updated = [...prev, photoStack[cardIndex]];
+      console.log("Fotos a conservar:", updated);
+      return updated;
+    });
+    setIsSwiping(false);
+  };
+  
 
   useEffect(() => {
     async function fetchPhotosStack() {
@@ -80,6 +126,7 @@ export default function GalleryScreen() {
             {/* Swiper solo para la imagen, manteniendo la estructura original */}
             <View style={{ flex: 1 }}>
               <Swiper
+                ref={swiperRef}
                 cards={photoStack}
                 renderCard={(card) => (
                   <Image
@@ -88,18 +135,24 @@ export default function GalleryScreen() {
                     resizeMode="cover"
                   />
                 )}
+                onSwipedLeft={managephotodelete}
+                onSwipedRight={managephotokeep}
                 stackSize={2}
                 cardIndex={0}
                 backgroundColor="transparent"
                 stackSeparation={15}
                 showSecondCard={true}
-                disableTopSwipe={false}
-                disableBottomSwipe={false}
+                disableTopSwipe={true}
+                disableBottomSwipe={true}
+                disableLeftSwipe={isSwiping}
+                disableRightSwipe={isSwiping}
+                swipeThreshold={width * 0.25}
                 containerStyle={{ flex: 1 }}
                 cardHorizontalMargin={0}
                 cardVerticalMargin={0}
                 cardStyle={{ borderRadius: 24, overflow: 'hidden', flex: 1, width: '100%' }}
               />
+              
               {/* Contenedor de botones sobrepuesto debajo de la foto */}
               <View style={{ position: 'absolute', left: 0, right: 0, bottom: 0, zIndex: 10 }}>
                 <View
@@ -124,16 +177,41 @@ export default function GalleryScreen() {
                     marginTop: 32,
                   }}
                 >
-                  {/* Botón Deshacer */}
-                  <TouchableOpacity className="w-16 h-16 rounded-full border-2 border-gray-400 items-center justify-center bg-gray-300 shadow-lg">
+
+                  {/* Botón Deshacer funcional */}
+                  <TouchableOpacity
+                    className={`w-16 h-16 rounded-full border-2 border-gray-400 items-center justify-center shadow-lg ${
+                      (deletephotos.length === 0 && keepphotos.length === 0) ? 'bg-gray-200 opacity-50' : 'bg-gray-300'
+                    }`}
+                    onPress={handleUndo}
+                    disabled={deletephotos.length === 0 && keepphotos.length === 0}
+                  >
                     <RotateCcw size={24} color="#ffffff" strokeWidth={2.5} />
                   </TouchableOpacity>
-                  {/* Botón Rechazar */}
-                  <TouchableOpacity className="w-16 h-16 rounded-full border-2 border-[#ef4444] items-center justify-center bg-[#ef4444] shadow-lg">
+
+                  {/* Botón Eliminar funcional */}
+                  <TouchableOpacity
+                    className={`w-16 h-16 rounded-full border-2 border-[#ef4444] items-center justify-center bg-[#ef4444] shadow-lg ${isSwiping ? 'opacity-50' : ''}`}
+                    onPress={() => {
+                      if (isSwiping) return;
+                      setIsSwiping(true);
+                      swiperRef.current?.swipeLeft();
+                    }}
+                    disabled={isSwiping}
+                  >
                     <X size={28} color="#ffffff" strokeWidth={2.5} />
                   </TouchableOpacity>
-                  {/* Botón Conservar */}
-                  <TouchableOpacity className="w-16 h-16 rounded-full border-2 border-[#7c3aed] items-center justify-center bg-[#7c3aed] shadow-lg">
+
+                  {/* Botón Conservar funcional */}
+                  <TouchableOpacity
+                    className={`w-16 h-16 rounded-full border-2 border-[#7c3aed] items-center justify-center bg-[#7c3aed] shadow-lg ${isSwiping ? 'opacity-50' : ''}`}
+                    onPress={() => {
+                      if (isSwiping) return;
+                      setIsSwiping(true);
+                      swiperRef.current?.swipeRight();
+                    }}
+                    disabled={isSwiping}
+                  >
                     <Check size={28} color="#ffffff" strokeWidth={2.5} />
                   </TouchableOpacity>
                 </View>
