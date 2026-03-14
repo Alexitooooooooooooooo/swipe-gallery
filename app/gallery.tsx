@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from "react";
 import Swiper from 'react-native-deck-swiper';
-import { View, Image, Text as RNText, Dimensions, ActivityIndicator, TouchableOpacity } from "react-native";
+import { View, Image as RNImage, Text as RNText, Dimensions, ActivityIndicator, TouchableOpacity, ScrollView } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Text } from "@/components/ui/text";
-import { RotateCcw, X, Check } from "lucide-react-native";
+import { RotateCcw, X, Check, Trash2 } from "lucide-react-native";
 import * as MediaLibrary from 'expo-media-library';
+import { Image as ExpoImage } from "expo-image";
 
 
 
@@ -18,20 +19,36 @@ export default function GalleryScreen() {
   const [loading, setLoading] = useState(true);
   const [deletephotos, setDeletePhotos] = useState<string[]>([]);
   const [keepphotos, setKeepPhotos] = useState<string[]>([]);
-  const [isSwiping, setIsSwiping] = useState(false);
+  const [viewMode, setViewMode] = useState<'gallery' | 'delete'>('gallery');
   const swiperRef = React.useRef<any>(null);
+  const currentCardIndexRef = React.useRef(0);
+  const swipeLockRef = React.useRef(false);
+
+  const preloadUris = async (uris: string[]) => {
+    await Promise.all(
+      uris.map(async (uri) => {
+        try {
+          await ExpoImage.prefetch(uri);
+        } catch {
+          // Ignoramos errores puntuales de prefetch para no bloquear la UI
+        }
+      })
+    );
+  };
 
   // Rehacer: elimina la última foto de deletephotos o keepphotos y la pone al frente del stack
   const handleUndo = () => {
-    if (isSwiping) return;
+    if (swipeLockRef.current) return;
     const lastDeleted = deletephotos[deletephotos.length - 1];
     const lastKept = keepphotos[keepphotos.length - 1];
 
     if (lastDeleted) {
+      void ExpoImage.prefetch(lastDeleted);
       setDeletePhotos(prev => prev.slice(0, -1));
       setPhotoStack(prev => [lastDeleted, ...prev]);
       console.log("Foto restaurada (eliminada):", lastDeleted);
     } else if (lastKept) {
+      void ExpoImage.prefetch(lastKept);
       setKeepPhotos(prev => prev.slice(0, -1));
       setPhotoStack(prev => [lastKept, ...prev]);
       console.log("Foto restaurada (conservada):", lastKept);
@@ -39,23 +56,33 @@ export default function GalleryScreen() {
   };
 
   const managephotodelete = (cardIndex: number) => {
-    // Se llama solo cuando el swipe ya terminó (onSwipedLeft)
+    const uri = photoStack[cardIndex];
+    if (!uri) {
+      swipeLockRef.current = false;
+      return;
+    }
     setDeletePhotos(prev => {
-      const updated = [...prev, photoStack[cardIndex]];
+      const updated = [...prev, uri];
       console.log("Fotos a eliminar:", updated);
       return updated;
     });
-    setIsSwiping(false);
+    currentCardIndexRef.current = cardIndex + 1;
+    swipeLockRef.current = false;
   };
 
   const managephotokeep = (cardIndex: number) => {
-    // Se llama solo cuando el swipe ya terminó (onSwipedRight)
+    const uri = photoStack[cardIndex];
+    if (!uri) {
+      swipeLockRef.current = false;
+      return;
+    }
     setKeepPhotos(prev => {
-      const updated = [...prev, photoStack[cardIndex]];
+      const updated = [...prev, uri];
       console.log("Fotos a conservar:", updated);
       return updated;
     });
-    setIsSwiping(false);
+    currentCardIndexRef.current = cardIndex + 1;
+    swipeLockRef.current = false;
   };
   
 
@@ -75,14 +102,18 @@ export default function GalleryScreen() {
           uris = shuffled.slice(0, 5).map(asset => asset.uri);
         }
         // Si no hay suficientes fotos, rellenamos con gatitos
-        while (uris.length < 5) {
+        while (uris.length < 10) {
           uris.push('https://images.unsplash.com/photo-1514888286974-6c03e2ca1dba?q=80&w=600&auto=format&fit=crop');
         }
+
+        await preloadUris(uris);
         setPhotoStack(uris);
       } catch (error) {
         console.warn('Error accediendo a galería:', error);
         // Fallback: 5 gatitos
-        setPhotoStack(Array(5).fill('https://images.unsplash.com/photo-1514888286974-6c03e2ca1dba?q=80&w=600&auto=format&fit=crop'));
+        const fallbackUris = Array(5).fill('https://images.unsplash.com/photo-1514888286974-6c03e2ca1dba?q=80&w=600&auto=format&fit=crop');
+        await preloadUris(fallbackUris);
+        setPhotoStack(fallbackUris);
       } finally {
         setLoading(false);
       }
@@ -99,7 +130,7 @@ export default function GalleryScreen() {
         Solo el logo centrado en la parte superior, sin borde para que la carta se superponga
       */}
       <View className="w-full items-center justify-start pt-4 bg-transparent z-10 relative">
-        <Image
+        <RNImage
           source={require('../assets/titulo.png')}
           className="w-56 h-24"
           resizeMode="contain"
@@ -123,99 +154,194 @@ export default function GalleryScreen() {
               shadowRadius: 20,
             }}
           >
-            {/* Swiper solo para la imagen, manteniendo la estructura original */}
             <View style={{ flex: 1 }}>
-              <Swiper
-                ref={swiperRef}
-                cards={photoStack}
-                renderCard={(card) => (
-                  <Image
-                    source={{ uri: card }}
-                    style={{ width: '100%', height: '100%', borderRadius: 24 }}
-                    resizeMode="cover"
-                  />
-                )}
-                onSwipedLeft={managephotodelete}
-                onSwipedRight={managephotokeep}
-                stackSize={2}
-                cardIndex={0}
-                backgroundColor="transparent"
-                stackSeparation={15}
-                showSecondCard={true}
-                disableTopSwipe={true}
-                disableBottomSwipe={true}
-                disableLeftSwipe={isSwiping}
-                disableRightSwipe={isSwiping}
-                swipeThreshold={width * 0.25}
-                containerStyle={{ flex: 1 }}
-                cardHorizontalMargin={0}
-                cardVerticalMargin={0}
-                cardStyle={{ borderRadius: 24, overflow: 'hidden', flex: 1, width: '100%' }}
-              />
-              
-              {/* Contenedor de botones sobrepuesto debajo de la foto */}
-              <View style={{ position: 'absolute', left: 0, right: 0, bottom: 0, zIndex: 10 }}>
-                <View
-                  className="px-4 py-6 flex-row justify-center items-center gap-6"
-                  style={{
-                    borderBottomLeftRadius: 24,
-                    borderBottomRightRadius: 24,
-                    borderLeftWidth: 2,
-                    borderRightWidth: 2,
-                    borderBottomWidth: 2,
-                    borderColor: '#e5e7eb', // gray-200
-                    backgroundColor: 'rgba(255,255,255,0.3)',
-                    position: 'absolute',
-                    left: 0,
-                    right: 0,
-                    bottom: 0,
-                    zIndex: 20,
-                    shadowColor: '#000',
-                    shadowOffset: { width: 0, height: 4 },
-                    shadowOpacity: 0.12,
-                    shadowRadius: 12,
-                    marginTop: 32,
-                  }}
+              {/* Tabs de vista: Galería / A eliminar */}
+              <View className="flex-row px-4 pt-3 pb-2 justify-between items-center">
+                <TouchableOpacity
+                  className={`px-4 py-2 rounded-full ${
+                    viewMode === 'gallery' ? 'bg-purple-600' : 'bg-gray-200'
+                  }`}
+                  onPress={() => setViewMode('gallery')}
                 >
+                  <Text className={viewMode === 'gallery' ? 'text-white font-semibold' : 'text-gray-700 font-semibold'}>
+                    Galería
+                  </Text>
+                </TouchableOpacity>
 
-                  {/* Botón Deshacer funcional */}
-                  <TouchableOpacity
-                    className={`w-16 h-16 rounded-full border-2 border-gray-400 items-center justify-center shadow-lg ${
-                      (deletephotos.length === 0 && keepphotos.length === 0) ? 'bg-gray-200 opacity-50' : 'bg-gray-300'
-                    }`}
-                    onPress={handleUndo}
-                    disabled={deletephotos.length === 0 && keepphotos.length === 0}
-                  >
-                    <RotateCcw size={24} color="#ffffff" strokeWidth={2.5} />
-                  </TouchableOpacity>
+                <TouchableOpacity
+                  className={`px-4 py-2 rounded-full flex-row items-center ${
+                    viewMode === 'delete' ? 'bg-red-500' : 'bg-gray-200'
+                  } ${deletephotos.length === 0 ? 'opacity-40' : ''}`}
+                  disabled={deletephotos.length === 0}
+                  onPress={() => setViewMode('delete')}
+                >
+                  <Text className={viewMode === 'delete' ? 'text-white font-semibold' : 'text-gray-700 font-semibold'}>
+                    A eliminar ({deletephotos.length})
+                  </Text>
+                </TouchableOpacity>
+              </View>
 
-                  {/* Botón Eliminar funcional */}
-                  <TouchableOpacity
-                    className={`w-16 h-16 rounded-full border-2 border-[#ef4444] items-center justify-center bg-[#ef4444] shadow-lg ${isSwiping ? 'opacity-50' : ''}`}
-                    onPress={() => {
-                      if (isSwiping) return;
-                      setIsSwiping(true);
-                      swiperRef.current?.swipeLeft();
+              {/* Swiper siempre montado para evitar reseteos/parpadeos */}
+              <View
+                style={{
+                  flex: 1,
+                  opacity: viewMode === 'gallery' ? 1 : 0,
+                }}
+                pointerEvents={viewMode === 'gallery' ? 'auto' : 'none'}
+              >
+                <View style={{ flex: 1 }}>
+                  <Swiper
+                    ref={swiperRef}
+                    cards={photoStack}
+                    renderCard={(card) =>
+                      card ? (
+                        <ExpoImage
+                          key={card}
+                          source={card}
+                          style={{ width: '100%', height: '100%', borderRadius: 24 }}
+                          contentFit="cover"
+                          transition={0}
+                          cachePolicy="memory-disk"
+                          recyclingKey={card}
+                        />
+                      ) : (
+                        <View style={{ width: '100%', height: '100%', borderRadius: 24, backgroundColor: '#f3f4f6' }} />
+                      )
+                    }
+                    onSwipedLeft={managephotodelete}
+                    onSwipedRight={managephotokeep}
+                    onSwipedAll={() => {
+                      swipeLockRef.current = false;
                     }}
-                    disabled={isSwiping}
-                  >
-                    <X size={28} color="#ffffff" strokeWidth={2.5} />
-                  </TouchableOpacity>
+                    stackSize={2}
+                    backgroundColor="transparent"
+                    animateCardOpacity={false}
+                    stackSeparation={15}
+                    showSecondCard={true}
+                    disableTopSwipe={true}
+                    disableBottomSwipe={true}
+                    horizontalThreshold={width * 0.25}
+                    containerStyle={{ flex: 1 }}
+                    cardHorizontalMargin={0}
+                    cardVerticalMargin={0}
+                    cardStyle={{ borderRadius: 24, overflow: 'hidden', flex: 1, width: '100%' }}
+                  />
+                </View>
 
-                  {/* Botón Conservar funcional */}
-                  <TouchableOpacity
-                    className={`w-16 h-16 rounded-full border-2 border-[#7c3aed] items-center justify-center bg-[#7c3aed] shadow-lg ${isSwiping ? 'opacity-50' : ''}`}
-                    onPress={() => {
-                      if (isSwiping) return;
-                      setIsSwiping(true);
-                      swiperRef.current?.swipeRight();
+                {/* Contenedor de botones sobrepuesto debajo de la foto */}
+                <View style={{ position: 'absolute', left: 0, right: 0, bottom: 0, zIndex: 10 }}>
+                  <View
+                    className="px-4 py-6 flex-row justify-center items-center gap-6"
+                    style={{
+                      borderBottomLeftRadius: 24,
+                      borderBottomRightRadius: 24,
+                      borderLeftWidth: 2,
+                      borderRightWidth: 2,
+                      borderBottomWidth: 2,
+                      borderColor: '#e5e7eb',
+                      backgroundColor: 'rgba(255,255,255,0.3)',
+                      position: 'absolute',
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      zIndex: 20,
+                      shadowColor: '#000',
+                      shadowOffset: { width: 0, height: 4 },
+                      shadowOpacity: 0.12,
+                      shadowRadius: 12,
+                      marginTop: 32,
                     }}
-                    disabled={isSwiping}
                   >
-                    <Check size={28} color="#ffffff" strokeWidth={2.5} />
-                  </TouchableOpacity>
+                    {/* Botón Deshacer funcional */}
+                    <TouchableOpacity
+                      className={`w-16 h-16 rounded-full border-2 border-gray-400 items-center justify-center shadow-lg ${
+                        (deletephotos.length === 0 && keepphotos.length === 0) ? 'bg-gray-200 opacity-50' : 'bg-gray-300'
+                      }`}
+                      onPress={handleUndo}
+                      disabled={deletephotos.length === 0 && keepphotos.length === 0}
+                    >
+                      <RotateCcw size={24} color="#ffffff" strokeWidth={2.5} />
+                    </TouchableOpacity>
+
+                    {/* Botón Eliminar funcional */}
+                    <TouchableOpacity
+                      className="w-16 h-16 rounded-full border-2 border-[#ef4444] items-center justify-center bg-[#ef4444] shadow-lg"
+                      onPress={() => {
+                        if (swipeLockRef.current) return;
+                        swipeLockRef.current = true;
+                        swiperRef.current?.swipeLeft();
+                      }}
+                    >
+                      <X size={28} color="#ffffff" strokeWidth={2.5} />
+                    </TouchableOpacity>
+
+                    {/* Botón Conservar funcional */}
+                    <TouchableOpacity
+                      className="w-16 h-16 rounded-full border-2 border-[#7c3aed] items-center justify-center bg-[#7c3aed] shadow-lg"
+                      onPress={() => {
+                        if (swipeLockRef.current) return;
+                        swipeLockRef.current = true;
+                        swiperRef.current?.swipeRight();
+                      }}
+                    >
+                      <Check size={28} color="#ffffff" strokeWidth={2.5} />
+                    </TouchableOpacity>
+                  </View>
                 </View>
               </View>
+
+              {viewMode === 'delete' && (
+                <View style={{ position: 'absolute', top: 56, left: 0, right: 0, bottom: 0 }}>
+                  <View style={{ flex: 1 }}>
+                    <ScrollView className="flex-1 px-4 pb-6">
+                      <View className="flex-row flex-wrap justify-between mt-2">
+                        {deletephotos.map((uri, index) => (
+                          <View
+                            key={uri + index}
+                            className="mb-4"
+                            style={{
+                              width: (width * 0.92 - 60) / 4, // 4 columnas, más separación
+                              marginRight: (index % 4 !== 3) ? 12 : 0,
+                              position: 'relative',
+                            }}
+                          >
+                            <ExpoImage
+                              key={uri + index}
+                              source={uri}
+                              style={{ width: '100%', height: 70, borderRadius: 10 }}
+                              contentFit="cover"
+                              transition={0}
+                              cachePolicy="memory-disk"
+                              recyclingKey={uri}
+                            />
+                          </View>
+                        ))}
+                      </View>
+                    </ScrollView>
+                    {/* Botón principal rojo eliminar como footer fijo */}
+                    <View style={{ width: '100%', alignItems: 'center', position: 'absolute', left: 0, right: 0, bottom: 0, paddingBottom: 16, backgroundColor: 'transparent' }}>
+                      <TouchableOpacity
+                        className="flex-row items-center justify-center bg-[#ef4444] border-2 border-[#ef4444] rounded-full shadow-lg px-6 py-3"
+                        style={{ minWidth: 180 }}
+                        onPress={() => {
+                          setDeletePhotos([]);
+                        }}
+                        disabled={deletephotos.length === 0}
+                      >
+                        <Trash2 size={28} color="#fff" strokeWidth={2.5} />
+                        <Text className="text-white text-lg font-semibold ml-2">
+                          Eliminar
+                        </Text>
+                        <View className="ml-3 bg-white rounded-full px-3 py-1">
+                          <Text className="text-[#ef4444] font-bold text-base">
+                            {deletephotos.length}
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                </View>
+              )}
             </View>
           </View>
         )}
