@@ -13,17 +13,30 @@ import { Image as ExpoImage } from "expo-image";
 
 
 const { width, height } = Dimensions.get('window');
+const BATCH_SIZE = 20;
+const LOAD_MORE_THRESHOLD = 5;
+const DELETE_RECOMMENDATION_LIMIT = 30;
+
+type GalleryAsset = {
+  id: string;
+  uri: string;
+};
 
 export default function GalleryScreen() {
-  const [photoStack, setPhotoStack] = useState<string[]>([]);
+  const [photoStack, setPhotoStack] = useState<GalleryAsset[]>([]);
   const [loading, setLoading] = useState(true);
-  const [deletephotos, setDeletePhotos] = useState<string[]>([]);
-  const [keepphotos, setKeepPhotos] = useState<string[]>([]);
+  const [deletephotos, setDeletePhotos] = useState<GalleryAsset[]>([]);
+  const [keepphotos, setKeepPhotos] = useState<GalleryAsset[]>([]);
   const [viewMode, setViewMode] = useState<'gallery' | 'delete'>('gallery');
   const swiperRef = React.useRef<any>(null);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [showRecommendationModal, setShowRecommendationModal] = useState(false);
   const currentCardIndexRef = React.useRef(0);
   const swipeLockRef = React.useRef(false);
+  const isLoadingMoreRef = React.useRef(false);
+  const limitModalShownRef = React.useRef(false);
+  const [nextCursor, setNextCursor] = useState<string | undefined>(undefined);
+  const [hasNextPage, setHasNextPage] = useState(true);
 
   const preloadUris = async (uris: string[]) => {
     await Promise.all(
@@ -44,83 +57,141 @@ export default function GalleryScreen() {
     const lastKept = keepphotos[keepphotos.length - 1];
 
     if (lastDeleted) {
-      void ExpoImage.prefetch(lastDeleted);
+      void ExpoImage.prefetch(lastDeleted.uri);
       setDeletePhotos(prev => prev.slice(0, -1));
       setPhotoStack(prev => [lastDeleted, ...prev]);
-      console.log("Foto restaurada (eliminada):", lastDeleted);
+      console.log("Foto restaurada (eliminada):", lastDeleted.uri);
     } else if (lastKept) {
-      void ExpoImage.prefetch(lastKept);
+      void ExpoImage.prefetch(lastKept.uri);
       setKeepPhotos(prev => prev.slice(0, -1));
       setPhotoStack(prev => [lastKept, ...prev]);
-      console.log("Foto restaurada (conservada):", lastKept);
+      console.log("Foto restaurada (conservada):", lastKept.uri);
+    }
+  };
+
+  const loadMorePhotos = async (isInitial = false) => {
+    if (isLoadingMoreRef.current) return;
+    if (!isInitial && !hasNextPage) return;
+
+    isLoadingMoreRef.current = true;
+
+    try {
+      const { status } = await MediaLibrary.requestPermissionsAsync();
+      if (status !== 'granted') {
+        console.log("Permiso denegado");
+        return;
+      }
+
+      const { assets, endCursor, hasNextPage: morePages } = await MediaLibrary.getAssetsAsync({
+        first: BATCH_SIZE,
+        mediaType: 'photo',
+        after: isInitial ? undefined : nextCursor,
+      });
+
+      const mappedAssets: GalleryAsset[] = (assets ?? []).map((asset) => ({
+        id: asset.id,
+        uri: asset.uri,
+      }));
+
+      if (mappedAssets.length > 0) {
+        await preloadUris(mappedAssets.map((asset) => asset.uri));
+      }
+
+      setPhotoStack((prev) => (isInitial ? mappedAssets : [...prev, ...mappedAssets]));
+      setNextCursor(endCursor ?? undefined);
+      setHasNextPage(morePages);
+    } catch (error) {
+      console.warn('Error cargando fotos:', error);
+    } finally {
+      isLoadingMoreRef.current = false;
+      if (isInitial) setLoading(false);
+    }
+  };
+
+  const maybeLoadMorePhotos = (nextCardIndex: number) => {
+    const remainingCards = photoStack.length - nextCardIndex;
+    if (remainingCards <= LOAD_MORE_THRESHOLD) {
+      void loadMorePhotos(false);
     }
   };
 
   const managephotodelete = (cardIndex: number) => {
-    const uri = photoStack[cardIndex];
-    if (!uri) {
+    const asset = photoStack[cardIndex];
+    if (!asset) {
       swipeLockRef.current = false;
       return;
     }
     setDeletePhotos(prev => {
-      const updated = [...prev, uri];
+      const updated = [...prev, asset];
       console.log("Fotos a eliminar:", updated);
       return updated;
     });
-    currentCardIndexRef.current = cardIndex + 1;
+    const nextCardIndex = cardIndex + 1;
+    currentCardIndexRef.current = nextCardIndex;
+    maybeLoadMorePhotos(nextCardIndex);
     swipeLockRef.current = false;
   };
 
   const managephotokeep = (cardIndex: number) => {
-    const uri = photoStack[cardIndex];
-    if (!uri) {
+    const asset = photoStack[cardIndex];
+    if (!asset) {
       swipeLockRef.current = false;
       return;
     }
     setKeepPhotos(prev => {
-      const updated = [...prev, uri];
+      const updated = [...prev, asset];
       console.log("Fotos a conservar:", updated);
       return updated;
     });
-    currentCardIndexRef.current = cardIndex + 1;
+    const nextCardIndex = cardIndex + 1;
+    currentCardIndexRef.current = nextCardIndex;
+    maybeLoadMorePhotos(nextCardIndex);
     swipeLockRef.current = false;
   };
-  
+
+  const handleDeleteSelected = async () => {
+    try {
+      const { status } = await MediaLibrary.requestPermissionsAsync();
+
+      if (status === 'granted') {
+        const idsToDelete = deletephotos.map((asset) => asset.id);
+        if (idsToDelete.length === 0) {
+          setShowConfirmModal(false);
+          return;
+        }
+
+        const success = await MediaLibrary.deleteAssetsAsync(idsToDelete);
+
+        if (success) {
+          console.log("Imagen(es) eliminada(s) con éxito");
+          setDeletePhotos([]);
+        } else {
+          console.log("El usuario canceló la eliminación o hubo un error");
+        }
+      } else {
+        console.log("Permiso denegado");
+      }
+    } catch (error) {
+      console.error("Error al intentar eliminar:", error);
+    } finally {
+      setShowConfirmModal(false);
+    }
+  };
 
   useEffect(() => {
-    async function fetchPhotosStack() {
-      try {
-        // Pedimos las primeras 20 fotos para agarrar 5 random
-        const { assets } = await MediaLibrary.getAssetsAsync({
-          first: 20,
-          mediaType: 'photo',
-        });
-
-        let uris: string[] = [];
-        if (assets && assets.length > 0) {
-          // Elegimos 5 fotos random, sin repetir
-          const shuffled = assets.sort(() => 0.5 - Math.random());
-          uris = shuffled.slice(0, 5).map(asset => asset.uri);
-        }
-        // Si no hay suficientes fotos, rellenamos con gatitos
-        while (uris.length < 10) {
-          uris.push('https://images.unsplash.com/photo-1514888286974-6c03e2ca1dba?q=80&w=600&auto=format&fit=crop');
-        }
-
-        await preloadUris(uris);
-        setPhotoStack(uris);
-      } catch (error) {
-        console.warn('Error accediendo a galería:', error);
-        // Fallback: 5 gatitos
-        const fallbackUris = Array(5).fill('https://images.unsplash.com/photo-1514888286974-6c03e2ca1dba?q=80&w=600&auto=format&fit=crop');
-        await preloadUris(fallbackUris);
-        setPhotoStack(fallbackUris);
-      } finally {
-        setLoading(false);
-      }
-    }
-    fetchPhotosStack();
+    void loadMorePhotos(true);
   }, []);
+
+  useEffect(() => {
+    if (deletephotos.length >= DELETE_RECOMMENDATION_LIMIT && !limitModalShownRef.current) {
+      setShowRecommendationModal(true);
+      limitModalShownRef.current = true;
+    }
+
+    if (deletephotos.length < DELETE_RECOMMENDATION_LIMIT) {
+      limitModalShownRef.current = false;
+    }
+  }, [deletephotos.length]);
 
   return (
     <SafeAreaView className="flex-1 bg-neutral-100">
@@ -197,13 +268,13 @@ export default function GalleryScreen() {
                     renderCard={(card) =>
                       card ? (
                         <ExpoImage
-                          key={card}
-                          source={card}
+                          key={card.id}
+                          source={card.uri}
                           style={{ width: '100%', height: '100%', borderRadius: 24 }}
                           contentFit="cover"
                           transition={0}
                           cachePolicy="memory-disk"
-                          recyclingKey={card}
+                          recyclingKey={card.id}
                         />
                       ) : (
                         <View style={{ width: '100%', height: '100%', borderRadius: 24, backgroundColor: '#f3f4f6' }} />
@@ -296,9 +367,9 @@ export default function GalleryScreen() {
                   <View style={{ flex: 1 }}>
                     <ScrollView className="flex-1 px-4 pb-6">
                       <View className="flex-row flex-wrap justify-between mt-2">
-                        {deletephotos.map((uri, index) => (
+                        {deletephotos.map((asset, index) => (
                           <View
-                            key={uri + index}
+                            key={asset.id + index}
                             className="mb-4"
                             style={{
                               width: (width * 0.92 - 60) / 4,
@@ -307,13 +378,13 @@ export default function GalleryScreen() {
                             }}
                           >
                             <ExpoImage
-                              key={uri + index}
-                              source={uri}
+                              key={asset.id + index}
+                              source={asset.uri}
                               style={{ width: '100%', height: 70, borderRadius: 10 }}
                               contentFit="cover"
                               transition={0}
                               cachePolicy="memory-disk"
-                              recyclingKey={uri}
+                              recyclingKey={asset.id}
                             />
                             <TouchableOpacity
                               style={{
@@ -333,7 +404,7 @@ export default function GalleryScreen() {
                                 shadowRadius: 2,
                               }}
                               onPress={() => {
-                                setDeletePhotos(prev => prev.filter((item, i) => i !== index));
+                                setDeletePhotos(prev => prev.filter((item) => item.id !== asset.id));
                               }}
                             >
                               <X size={14} color="#fff" strokeWidth={2.5} />
@@ -457,8 +528,7 @@ export default function GalleryScreen() {
                   justifyContent: 'center',
                 }}
                 onPress={() => {
-                  setDeletePhotos([]);
-                  setShowConfirmModal(false);
+                  void handleDeleteSelected();
                 }}
               >
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
@@ -469,6 +539,75 @@ export default function GalleryScreen() {
                 </View>
               </TouchableOpacity>
             </View>
+          </View>
+        </View>
+      )}
+
+      {showRecommendationModal && (
+        <View
+          style={{
+            position: 'absolute',
+            left: 0,
+            right: 0,
+            top: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0,0,0,0.4)',
+            justifyContent: 'center',
+            alignItems: 'center',
+            zIndex: 101,
+          }}
+        >
+          <View
+            style={{
+              backgroundColor: '#fff',
+              borderRadius: 20,
+              paddingHorizontal: 20,
+              paddingTop: 18,
+              paddingBottom: 16,
+              width: 320,
+              maxWidth: '90%',
+              shadowColor: '#000',
+              shadowOpacity: 0.2,
+              shadowRadius: 18,
+              shadowOffset: { width: 0, height: 8 },
+            }}
+          >
+            <RNText
+              style={{
+                fontSize: 18,
+                fontWeight: '600',
+                color: '#111827',
+                textAlign: 'center',
+                marginBottom: 10,
+              }}
+            >
+              Recomendación
+            </RNText>
+            <RNText
+              style={{
+                fontSize: 14,
+                color: '#374151',
+                textAlign: 'center',
+                marginBottom: 18,
+              }}
+            >
+              Tienes {deletephotos.length} fotos marcadas para eliminar. Te recomendamos borrarlas ahora para mantener el flujo ágil.
+            </RNText>
+
+            <TouchableOpacity
+              style={{
+                paddingVertical: 10,
+                borderRadius: 999,
+                backgroundColor: '#4b5563',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+              onPress={() => setShowRecommendationModal(false)}
+            >
+              <RNText style={{ color: '#fff', fontWeight: '600', fontSize: 14 }}>
+                Aceptar
+              </RNText>
+            </TouchableOpacity>
           </View>
         </View>
       )}
