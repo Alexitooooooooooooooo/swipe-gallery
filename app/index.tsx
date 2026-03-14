@@ -7,9 +7,9 @@ import { Text } from "@/components/ui/text";
 import { Play, Loader2 } from "lucide-react-native";
 import * as MediaLibrary from 'expo-media-library';
 
-export default function App() {
+export default function App({ onNavigate }: { onNavigate: () => void }) {
   const [isLoading, setIsLoading] = useState(false);
-  
+
   // Custom Hook request to get strictly photos:
   const [permissionResponse, requestPermission] = MediaLibrary.usePermissions({
     granularPermissions: ['photo']
@@ -17,17 +17,17 @@ export default function App() {
 
   const handlePress = async () => {
     setIsLoading(true);
-    
+
     try {
       if (!permissionResponse || permissionResponse.status !== 'granted') {
         const response = await requestPermission();
         if (response.granted) {
-          Alert.alert("¡Éxito!", "Resolvimos los permisos, ya puedes organizar tus fotos.");
+          onNavigate();
         } else {
           Alert.alert("Permiso Denegado", "Lo siento, necesitamos tu galería para seguir.");
         }
       } else {
-        Alert.alert("Permiso Listo", "¡Ya tienes acceso total a tus fotos!");
+        onNavigate();
       }
     } catch (error) {
       console.error(error);
